@@ -7,6 +7,7 @@ import (
 	"sync"
         "strings"
         "strconv"
+        "time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/log"
@@ -19,6 +20,11 @@ const (
 var (
 	listenAddress = flag.String("telemetry.address", ":9115", "Address on which to expose metrics.")
 	metricsPath  = flag.String("telemetry.endpoint", "/metrics", "Path under which to expose metrics.")
+        pflogsummEnabled = flag.String("pflogsumm", "no", "Collect and expose pflogsumm statistics")
+        pflogsummLog = flag.String("pflogsummLog", "", "Mail logfile to parse for pflogsumm (non systemd mode)")
+        systemdEnabled = flag.String("systemd", "no", "Collect and expose pflogsumm statistics")
+        pflogsummInterval = flag.Int64("pflogsummInterval", 60, "Interval to update pflogsumm statistics (re-run pflogsumm)")
+        lastPostfixLogsumm int64 = 0
 )
 
 // Exporter collects postfix stats from machine of a specified user and exports them using
@@ -32,6 +38,14 @@ type Exporter struct {
         deferredQ      prometheus.Gauge
         holdQ          prometheus.Gauge
         bounceQ        prometheus.Gauge
+        received       prometheus.Gauge
+        delivered      prometheus.Gauge
+        forwarded      prometheus.Gauge
+        deferred       prometheus.Gauge
+        bounced        prometheus.Gauge
+        rejected       prometheus.Gauge
+        held           prometheus.Gauge
+        discarded      prometheus.Gauge
 }
 
 // NewPostfixExporter returns an initialized Exporter.
@@ -72,6 +86,46 @@ func NewPostfixExporter() *Exporter {
                         Name:      "bounce_queue_length",
                         Help:      "length of bounce mail queue",
                 }),
+          received: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "received_mails",
+                        Help:      "number received mails",
+                }),
+          delivered: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "delivered_mails",
+                        Help:      "number delivered mails",
+                }),
+          forwarded: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "forwarded_mails",
+                        Help:      "number forwarded mails",
+                }),
+          deferred: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "deferred_mails",
+                        Help:      "number deferred mails",
+                }),
+          bounced: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "bounced_mails",
+                        Help:      "number bounced mails",
+                }),
+          rejected: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "rejected_mails",
+                        Help:      "number rejected mails",
+                }),
+          held: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "held_mails",
+                        Help:      "number held mails",
+                }),
+          discarded: prometheus.NewGauge(prometheus.GaugeOpts{
+                        Namespace: namespace,
+                        Name:      "discarded_mails",
+                        Help:      "number discarded mails",
+                }),
 
 	}
 }
@@ -86,6 +140,46 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
     e.deferredQ.Describe(ch)
     e.holdQ.Describe(ch)
     e.bounceQ.Describe(ch)
+    e.received.Describe(ch)
+    e.delivered.Describe(ch)
+    e.forwarded.Describe(ch)
+    e.deferred.Describe(ch)
+    e.bounced.Describe(ch)
+    e.rejected.Describe(ch)
+    e.held.Describe(ch)
+    e.discarded.Describe(ch)
+}
+
+func parsePostfixLogfile() {
+    var cmd string
+
+    if (*pflogsummEnabled == "no") { 
+        return
+    }
+
+    if ((lastPostfixLogsumm + *pflogsummInterval) > time.Now().Unix()) {
+        return
+    }
+
+
+    if (*systemdEnabled == "yes") {
+        cmd = "journalctl -u postfix.service --since today | pflogsumm --smtpd_stats | head -n 15 > /tmp/postfix_exporter.stats;"
+    } else {
+        cmd = "pflogsumm --smtpd_stats -d today "+*pflogsummLog+" | head -n 15 > /tmp/postfix_exporter.stats;"
+    }
+
+    log.Infof("Running: "+cmd)
+    exec.Command("bash", "-c", cmd).Output()
+    lastPostfixLogsumm = time.Now().Unix();
+}
+
+func getPostfixStat(stat string) string {
+    parsePostfixLogfile()
+    cmd := "grep '"+stat+"' /tmp/postfix_exporter.stats | awk '{print $1}'"
+    out, _ := exec.Command("bash", "-c", cmd).Output()
+    num := string(out)
+    num = strings.TrimSpace(num)
+    return num
 }
 
 func getPostfixQueueLength() string {
@@ -135,6 +229,32 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) error {
     bounce_queue, _ := strconv.ParseFloat(getQueueLength("bounce", queue_dir), 64)
     e.bounceQ.Set(float64(bounce_queue))
 
+    if (*pflogsummEnabled == "yes") {
+        received, _ := strconv.ParseFloat(getPostfixStat("received"), 64)
+        e.received.Set(float64(received))
+
+        delivered, _ := strconv.ParseFloat(getPostfixStat("delivered"), 64)
+        e.delivered.Set(float64(delivered))
+
+        forwarded, _ := strconv.ParseFloat(getPostfixStat("forwarded"), 64)
+        e.forwarded.Set(float64(forwarded))
+
+        deferred, _ := strconv.ParseFloat(getPostfixStat("deferred"), 64)
+        e.deferred.Set(float64(deferred))
+
+        bounced, _ := strconv.ParseFloat(getPostfixStat("bounced"), 64)
+        e.bounced.Set(float64(bounced))
+
+        rejected, _ := strconv.ParseFloat(getPostfixStat("rejected"), 64)
+        e.rejected.Set(float64(rejected))
+
+        held, _ := strconv.ParseFloat(getPostfixStat("held"), 64)
+        e.held.Set(float64(held))
+
+        discarded, _ := strconv.ParseFloat(getPostfixStat("discarded"), 64)
+        e.discarded.Set(float64(discarded))
+    }
+
     return nil
 }
 
@@ -153,6 +273,16 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
         e.deferredQ.Collect(ch)
         e.holdQ.Collect(ch)
         e.bounceQ.Collect(ch)
+        if (*pflogsummEnabled == "yes") {
+            e.received.Collect(ch)
+            e.delivered.Collect(ch)
+            e.forwarded.Collect(ch)
+            e.deferred.Collect(ch)
+            e.bounced.Collect(ch)
+            e.rejected.Collect(ch)
+            e.held.Collect(ch)
+            e.discarded.Collect(ch)
+        }
 	return
 }
 
@@ -172,6 +302,12 @@ func main() {
                 </html>
               `))
 	})
+        if (*systemdEnabled == "no" && *pflogsummEnabled == "yes" && *pflogsummLog == "") {
+           log.Fatal("Systemd disabled, pflogsumm enabled but no logfile given via -pflogsummLog!")
+        }
 	log.Infof("Starting Server: %s", *listenAddress)
+	log.Infof("systemd enabled: %s", *systemdEnabled)
+	log.Infof("pflogsumm enabled: %s", *pflogsummEnabled)
+	log.Infof("pflogsumm interval: %d", *pflogsummInterval)
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
