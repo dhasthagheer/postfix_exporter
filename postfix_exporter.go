@@ -17,7 +17,6 @@ const (
 )
 
 var (
-	listenAddress = flag.String("telemetry.address", ":9115", "Address on which to expose metrics.")
 	metricsPath  = flag.String("telemetry.endpoint", "/metrics", "Path under which to expose metrics.")
 )
 
@@ -172,6 +171,5 @@ func main() {
                 </html>
               `))
 	})
-	log.Infof("Starting Server: %s", *listenAddress)
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	log.Fatal(http.ListenAndServe(":0", nil))
 }
