@@ -90,7 +90,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 func getPostfixQueueLength() string {
     cmd := "/usr/sbin/postqueue -p | tail -n1 | awk '{print $5}'"
-    out, _ := exec.Command("bash", "-c", cmd).Output()
+    out, _ := exec.Command("sh", "-c", cmd).Output()
     len := string(out)
     len = strings.TrimSpace(len)
     return len
@@ -98,7 +98,7 @@ func getPostfixQueueLength() string {
 
 func getQueueDir() string{
     cmd := "postconf -h queue_directory"
-    out,_ := exec.Command("bash", "-c", cmd).Output()
+    out,_ := exec.Command("sh", "-c", cmd).Output()
     dir := string(out)
     dir = strings.TrimSpace(dir)
     return dir
@@ -106,7 +106,7 @@ func getQueueDir() string{
 
 func getQueueLength(qname string, qdir string) string{
     cmd := "sudo find "+qdir+"/"+qname+" -type f -print | wc -l | awk '{print $1}'"
-    out,_ := exec.Command("bash", "-c", cmd).Output()
+    out,_ := exec.Command("sh", "-c", cmd).Output()
     qlen := string(out)
     qlen = strings.TrimSpace(qlen)
     return qlen
@@ -116,22 +116,22 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) error {
     queue_length, _ := strconv.ParseFloat(getPostfixQueueLength(), 64)
     e.totalQ.Set(float64(queue_length))
     queue_dir := getQueueDir()
-    
+
     incoming_queue, _ := strconv.ParseFloat(getQueueLength("incoming", queue_dir), 64)
     e.incomingQ.Set(float64(incoming_queue))
-   
+
     active_queue, _ := strconv.ParseFloat(getQueueLength("active", queue_dir), 64)
     e.activeQ.Set(float64(active_queue))
 
     maildrop_queue, _ := strconv.ParseFloat(getQueueLength("maildrop", queue_dir), 64)
     e.maildropQ.Set(float64(maildrop_queue))
-   
+
     deferred_queue, _ := strconv.ParseFloat(getQueueLength("deferred", queue_dir), 64)
     e.deferredQ.Set(float64(deferred_queue))
 
     hold_queue, _ := strconv.ParseFloat(getQueueLength("hold", queue_dir), 64)
     e.holdQ.Set(float64(hold_queue))
-   
+
     bounce_queue, _ := strconv.ParseFloat(getQueueLength("bounce", queue_dir), 64)
     e.bounceQ.Set(float64(bounce_queue))
 
